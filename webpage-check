@@ -1,0 +1,151 @@
+#!/bin/bash
+VERSION='1.0.0'
+
+function help () {
+    echo -e "\n\
+GNU webpage-check is a bash script based on SENDGRID (https://sendgrid.com/)\n\
+that notifyes you via e-mail when a given web page become reachable.\n\
+\n\
+USAGE: webpage-check [OPTIONS]...\n\
+\n\
+This application is based on SENDGRID, so you have to provide a valid API KEY to\n\
+be able to use SENDGRID's REST API. Before calling this script make sure you\n\
+have exported the environment variable SENDGRID_API_KEY.\n\
+To obtain a valid API KEY please visit the related documentation on SENDGRID web\n\
+site at https://sendgrid.com.\n\
+\n\
+OPTIONS:\n\
+\n\
+  -f, --from-addr         Set the e-mail address for the sender. The default\n\
+                          value is 'webpage-checker@script.bash'.\n\
+  -F, --from-name         Set the name for the sender. The default value is\n\
+                          'Webpage Cheker'.\n\
+  -h, --help              Shot this help.\n\
+  -m, --message           Set the e-mail body messate. An empty string is the\n\
+                          default value.\n\
+  -r, --recipients        A comma separated list of e-mail addresses used as\n\
+                          recipients. This value is mandatory.\n\
+  -s, --subject           Set the e-mail subject. If omitted the default value\n\
+                          'Webpage is ONLINE' is used.\n\
+  -u, --url               Set the target URL that we want to check. This value\n\
+                          is mandatory.\n\
+  -v, --version           Show version info.\n\
+  -w, --wait              Set the time that will pass betweet two consecutive\n\
+                          checks in the format NUMBER[SUFFIX]. SUFFIX may be 's'\n\
+                          for seconds (the default), 'm' for minutes, 'h' for\n\
+                          hours or 'd' for days.\n\
+\n\
+For bugs and other informations, please visit\n\
+https://github.com/mircobe87/webpage-check"
+}
+
+function version () {
+    echo -e "webpage-check $VERSION"
+}
+
+# check if the command CURL is installed
+command -v curl &> /dev/null || { echo "I require 'curl' but it's not installed." >&2; exit 1; }
+
+if [ -z $SENDGRID_API_KEY ]; then
+    echo "no value provider for environment variable SENDGRID_API_KEY" >&2
+    help
+    exit 1
+fi
+
+MAIL_SUBJECT='Webpage is ONLINE'
+FROM_NAME='Webpage Cheker'
+FROM_ADDR='webpage-checker@script.bash'
+MESSAGE=' '
+
+while [[ $# -gt 0 ]]; do
+    key="$1"
+    case $key in
+    -u|--url)
+        URL="$2"
+        shift # past argument
+        shift # past value
+        ;;
+    -w|--wait)
+        WAIT="$2"
+        shift # past argument
+        shift # past value
+        ;;
+    -s|--subject)
+        MAIL_SUBJECT="$2"
+        shift # past argument
+        shift # past value
+        ;;
+    -m|--message)
+        MESSAGE="$2"
+        shift # past argument
+        shift # past value
+        ;;
+    -f|--from-addr)
+        FROM_ADDR="$2"
+        shift # past argument
+        shift # past value
+        ;;
+    -F|--from-name)
+        FROM_NAME="$2"
+        shift # past argument
+        shift # past value
+        ;;
+    -r|--recipients)
+        RECIPIENTS=${2//,/ }
+        shift # past argument
+        shift # past value
+        ;;
+    -h|--help)
+        help
+        exit 0
+        ;;
+    -v|--version)
+        version
+        exit 0
+        ;;
+    *)    # unknown option
+        shift # past argument
+        ;;
+    esac
+done
+set -- "${RECIPIENTS[@]}"
+
+if [ -z $WAIT ]; then
+    echo "missing checking time rate. (-w, --wait)" >&2
+    help
+    exit 1;
+fi
+
+if [ -z $URL ]; then
+    echo "missing URL to be checked. (-u, --url)" >&2
+    help
+    exit 1;
+fi
+
+if [ $# -le 0 ]; then
+    echo "missing recipients list. (-r, --recipients)" >&2
+    help
+    exit 1
+fi
+
+    while [ "1" -eq "1" ]; do
+        CODE="$(curl -s -o /dev/null -I -w "%{http_code}" $URL)"
+        echo "[$(date +'%F %X %Z')]" $URL $CODE
+        if [ $CODE -eq "200" ]; then
+            # send email
+            echo "[$(date +'%F %X %Z')]" "sending email to:" $@
+            for MAIL_ADDR in $@; do
+                BODY="{ \"personalizations\": [ { \"to\": [ { \"email\": \"$MAIL_ADDR\", \"name\": \"$MAIL_ADDR\" } ], \"subject\": \"$MAIL_SUBJECT\" } ], \"from\": { \"email\": \"$FROM_ADDR\", \"name\": \"$FROM_NAME\" }, \"content\": [{\"type\": \"text/plain\", \"value\": \"$MESSAGE\"}] }"
+                echo "[$(date +'%F %X %Z')]" $MAIL_ADDR $BODY
+                curl --request POST \
+                     --url https://api.sendgrid.com/v3/mail/send \
+                     --header "authorization: Bearer $SENDGRID_API_KEY" \
+                     --header 'content-type: application/json' \
+                     --data "$BODY"
+            done
+            exit 0
+        fi
+        sleep $WAIT
+    done
+
+exit 0
